@@ -1,0 +1,6 @@
+SiegeCrashScanner/bin/
+SiegeCrashScanner/obj/
+release/
+.vs/
+*.user
+*.suo
