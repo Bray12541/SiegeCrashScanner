@@ -32,14 +32,18 @@ internal static class ReportAnalyzer
             Detail = memory.Detail + (memory.TestDate is null ? string.Empty : $" Last test: {memory.TestDate:g}.")
         });
 
-        var severeWhea = report.WheaEvents.Any(e => e.Message.Contains("fatal", StringComparison.OrdinalIgnoreCase) || e.Message.Contains("uncorrected", StringComparison.OrdinalIgnoreCase));
+        var severeWhea = report.WheaEvents.Any(e => e.Severity.Equals("Fatal", StringComparison.OrdinalIgnoreCase));
+        var persistedWhea = report.WheaEvents.Count(e => e.IsPreviousError);
+        var correlatedWhea = report.CorrelatedWheaEvents.Count;
         report.Findings.Add(new Finding
         {
             Title = "WHEA Hardware Errors",
-            Status = report.WheaEvents.Count == 0 ? FindingStatus.Pass : severeWhea ? FindingStatus.Fail : FindingStatus.Warning,
-            Detail = report.WheaEvents.Count == 0
+            Status = report.RawWheaEventCount == 0 ? FindingStatus.Pass : severeWhea ? FindingStatus.Fail : FindingStatus.Warning,
+            Detail = report.RawWheaEventCount == 0
                 ? "No recent WHEA hardware errors found."
-                : $"Found {report.WheaEvents.Count} WHEA event(s) in the last 30 days: {string.Join(", ", report.WheaEvents.Select(e => e.Category).Distinct())}."
+                : $"Found {report.RawWheaEventCount} log occurrence(s), representing {report.WheaEvents.Count} unique record(s): {string.Join(", ", report.WheaEvents.Select(e => e.Category).Distinct())}. " +
+                  (persistedWhea > 0 ? $"{persistedWhea} unique record(s) were marked as persisted PreviousError reports. " : string.Empty) +
+                  (correlatedWhea > 0 ? $"{correlatedWhea} record(s) occurred within five minutes of a Siege crash." : "No unique WHEA record was within five minutes of a recorded Siege crash.")
         });
 
         var availablePercent = report.System.TotalRamBytes == 0 ? 100 : report.System.AvailableRamBytes * 100d / report.System.TotalRamBytes;
@@ -51,6 +55,47 @@ internal static class ReportAnalyzer
             Detail = $"{Format.Bytes(report.System.UsedRamBytes)} in use, {Format.Bytes(report.System.AvailableRamBytes)} available of {Format.Bytes(report.System.TotalRamBytes)}. " +
                      (lowRam ? "Windows is extremely low on available memory." : "Available memory is not critically low.")
         });
+
+        var unhealthyDisks = report.System.StorageDevices.Where(device =>
+            !device.Status.Equals("OK", StringComparison.OrdinalIgnoreCase) &&
+            !device.Status.Equals("Unknown", StringComparison.OrdinalIgnoreCase)).ToList();
+        var severeStorageEvent = report.StorageEvents.Any(item => item.EventId is 7 or 11 or 55);
+        report.Findings.Add(new Finding
+        {
+            Title = "Storage Health",
+            Status = unhealthyDisks.Count > 0 || severeStorageEvent ? FindingStatus.Fail : report.StorageEvents.Count > 0 ? FindingStatus.Warning : FindingStatus.Pass,
+            Detail = unhealthyDisks.Count > 0
+                ? $"Windows reports a non-OK status for: {string.Join(", ", unhealthyDisks.Select(d => d.Model))}."
+                : report.StorageEvents.Count > 0
+                    ? $"Drive status reports OK/unknown, but Windows recorded {report.StorageEvents.Count} recent disk, controller, or filesystem event(s)."
+                    : $"No recent disk/controller errors were found. Windows reports {report.System.StorageDevices.Count} physical drive(s) with OK or unknown status."
+        });
+
+        report.Findings.Add(new Finding
+        {
+            Title = "System Stability",
+            Status = report.StabilityEvents.Count > 0 ? FindingStatus.Warning : FindingStatus.Pass,
+            Detail = report.StabilityEvents.Count > 0
+                ? $"Windows recorded {report.StabilityEvents.Count} unexpected shutdown or Kernel-Power event(s) in the last 30 days. These events show an unclean shutdown but do not identify its cause."
+                : "No unexpected shutdown or Kernel-Power events were found in the last 30 days."
+        });
+
+        report.Findings.Add(new Finding
+        {
+            Title = "BIOS / Firmware",
+            Status = FindingStatus.Info,
+            Detail = $"Installed BIOS: {report.System.BiosVersion} ({report.System.BiosDate}). The scanner does not declare it outdated without comparing the exact motherboard revision against its manufacturer."
+        });
+
+        if (report.Comparison.PreviousScanTime is not null)
+        {
+            report.Findings.Add(new Finding
+            {
+                Title = "Since Previous Scan",
+                Status = report.Comparison.NewWheaOccurrences + report.Comparison.NewGpuEvents + report.Comparison.NewStorageEvents + report.Comparison.NewSiegeCrashes == 0 ? FindingStatus.Pass : FindingStatus.Warning,
+                Detail = $"Since {report.Comparison.PreviousScanTime:g}: {report.Comparison.NewSiegeCrashes} Siege crash(es), {report.Comparison.NewWheaOccurrences} WHEA occurrence(s), {report.Comparison.NewGpuEvents} GPU event(s), and {report.Comparison.NewStorageEvents} storage event(s). This comparison lasts for the current app session only."
+            });
+        }
 
         var commit = report.System.CommitLimitBytes == 0 ? 0 : report.System.CommitUsedBytes * 100d / report.System.CommitLimitBytes;
         report.Findings.Add(new Finding
@@ -119,12 +164,18 @@ internal static class ReportAnalyzer
         if (report.MemoryDiagnostic.Passed == false)
             Add(report, "Memory instability", "High", "Windows Memory Diagnostic reported errors.", 100);
 
-        if (report.WheaEvents.Count > 0)
+        if (report.RawWheaEventCount > 0)
         {
             var memory = report.WheaEvents.Any(e => e.Category.Contains("Memory", StringComparison.OrdinalIgnoreCase));
             var cpu = report.WheaEvents.Any(e => e.Category.Contains("CPU", StringComparison.OrdinalIgnoreCase));
-            Add(report, memory ? "Memory controller or RAM instability" : cpu ? "CPU or platform hardware instability" : "Hardware/PCIe instability",
-                report.WheaEvents.Count > 2 ? "High" : "Medium", $"Windows recorded {report.WheaEvents.Count} recent WHEA hardware event(s).", report.WheaEvents.Count > 2 ? 95 : 75);
+            var firmware = report.WheaEvents.Any(e => e.Category.Contains("firmware", StringComparison.OrdinalIgnoreCase));
+            var uniqueFatal = report.WheaEvents.Count(e => e.Severity.Equals("Fatal", StringComparison.OrdinalIgnoreCase));
+            var highConfidence = report.CorrelatedWheaEvents.Count > 0 || uniqueFatal > 1;
+            Add(report, memory ? "Memory controller or RAM instability" : cpu ? "CPU or platform hardware instability" : firmware ? "BIOS or platform-firmware instability" : "Hardware/PCIe instability",
+                highConfidence ? "High" : "Medium",
+                $"Windows recorded {report.RawWheaEventCount} WHEA occurrence(s), representing {report.WheaEvents.Count} unique record(s)" +
+                (report.WheaEvents.Any(e => e.IsPreviousError) ? "; some were persisted PreviousError reports and may be replayed across boots." : "."),
+                highConfidence ? 95 : 75);
         }
 
         if (report.CorrelatedGpuEvents.Count > 0)
@@ -141,6 +192,10 @@ internal static class ReportAnalyzer
 
         if (report.System.SiegeDetected && report.System.SiegeDriveFreeBytes >= 0 && report.System.SiegeDriveFreeBytes < 15 * (long)Gb)
             Add(report, "Low free disk space", "Medium", "The Siege drive has less than 15 GB free.", 58);
+
+        if (report.StorageEvents.Count > 0)
+            Add(report, "Storage or filesystem instability", report.StorageEvents.Any(item => item.EventId is 7 or 11 or 55) ? "High" : "Medium",
+                $"Windows recorded {report.StorageEvents.Count} recent disk, controller, or filesystem event(s).", 82);
 
         if (report.BattleEye.Failures.Count > 0)
             Add(report, "BattlEye service issue", "Medium", "Windows recorded recent BattlEye service failures.", 66);
@@ -172,8 +227,12 @@ internal static class ReportAnalyzer
             return "Run the Windows Memory Diagnostic extended test once, then compare its new result before changing any BIOS or RAM settings.";
         if (report.CorrelatedGpuEvents.Count > 0)
             return "Perform one clean reinstall of the current GPU driver using the GPU vendor's official installer, then test Siege again.";
+        if (report.WheaEvents.Any(item => item.Category.Contains("firmware", StringComparison.OrdinalIgnoreCase)))
+            return "Update the exact motherboard model and revision to its latest stable BIOS using the manufacturer's built-in firmware utility, then test Siege once and scan again for new WHEA timestamps.";
         if (report.WheaEvents.Count > 0)
-            return "Run your PC or motherboard manufacturer's hardware diagnostic once and compare its result with the WHEA category shown above.";
+            return "Run your PC or motherboard manufacturer's hardware diagnostic once and compare its result with the decoded WHEA category shown above.";
+        if (report.StorageEvents.Count > 0)
+            return "Run the app's CHKDSK online scan once, then review whether it reports filesystem or drive errors before attempting repairs.";
         if (!report.System.PagefileEnabled)
             return "Enable a system-managed Windows pagefile, restart Windows, and test Siege once.";
         if (report.System.AvailableRamBytes < 2 * Gb)

@@ -11,7 +11,7 @@
     <AssemblyName>SiegeCrashScanner</AssemblyName>
     <RootNamespace>SiegeCrashScanner</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Product>Siege Crash Scanner</Product>
     <Description>Local diagnostic scanner for Rainbow Six Siege crashes.</Description>
     <PublishSingleFile>true</PublishSingleFile>

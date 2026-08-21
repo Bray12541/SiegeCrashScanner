@@ -86,18 +86,90 @@ internal static partial class EventLogCollector
         var query = $"*[System[Provider[@Name='Microsoft-Windows-WHEA-Logger'] and TimeCreated[timediff(@SystemTime) <= {ThirtyDaysMs}]]]";
         try
         {
-            return Read("System", query, 100).Select(item => new DiagnosticEvent
+            var decoded = Read("System", query, 200).Select(item =>
             {
-                Time = item.Time,
-                EventId = item.Id,
-                Provider = item.Provider,
-                Category = CategorizeWhea(item.Message),
-                Message = TrimMessage(item.Message)
-            }).OrderByDescending(e => e.Time).ToList();
+                var analysis = WheaDecoder.Decode(item.Xml, item.Message, item.Time);
+                return new DiagnosticEvent
+                {
+                    Time = item.Time,
+                    FirstSeen = item.Time,
+                    EventId = item.Id,
+                    Provider = item.Provider,
+                    Category = analysis.Category,
+                    Severity = analysis.Severity,
+                    Fingerprint = analysis.Fingerprint,
+                    IsPreviousError = analysis.IsPreviousError,
+                    TechnicalDetails = analysis.TechnicalDetails,
+                    Message = TrimMessage(item.Message),
+                    OccurrenceTimes = [item.Time]
+                };
+            }).ToList();
+
+            return decoded.GroupBy(item => item.Fingerprint, StringComparer.OrdinalIgnoreCase)
+                .Select(group =>
+                {
+                    var newest = group.OrderByDescending(item => item.Time).First();
+                    newest.OccurrenceCount = group.Count();
+                    newest.FirstSeen = group.Min(item => item.Time);
+                    newest.OccurrenceTimes = group.Select(item => item.Time).OrderByDescending(time => time).ToList();
+                    return newest;
+                })
+                .OrderByDescending(item => item.Time)
+                .ToList();
         }
         catch (Exception ex)
         {
             notes.Add("WHEA hardware log could not be read: " + ex.Message);
+            return [];
+        }
+    }
+
+    public static List<DiagnosticEvent> ReadStorageEvents(List<string> notes)
+    {
+        var query = $"*[System[TimeCreated[timediff(@SystemTime) <= {ThirtyDaysMs}] and " +
+                    "((Provider[@Name='disk'] and (EventID=7 or EventID=11 or EventID=15 or EventID=51 or EventID=153)) " +
+                    "or (Provider[@Name='Ntfs'] and EventID=55) " +
+                    "or ((Provider[@Name='storahci'] or Provider[@Name='stornvme']) and (EventID=129 or EventID=153)))]]";
+        try
+        {
+            return Read("System", query, 100).Select(item => new DiagnosticEvent
+            {
+                Time = item.Time,
+                FirstSeen = item.Time,
+                EventId = item.Id,
+                Provider = item.Provider,
+                Category = "Storage / filesystem",
+                Severity = "Warning",
+                Message = TrimMessage(item.Message)
+            }).OrderByDescending(item => item.Time).ToList();
+        }
+        catch (Exception ex)
+        {
+            notes.Add("Storage reliability events could not be read: " + ex.Message);
+            return [];
+        }
+    }
+
+    public static List<DiagnosticEvent> ReadStabilityEvents(List<string> notes)
+    {
+        var query = $"*[System[TimeCreated[timediff(@SystemTime) <= {ThirtyDaysMs}] and " +
+                    "((Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41) or EventID=6008)]]";
+        try
+        {
+            return Read("System", query, 100).Select(item => new DiagnosticEvent
+            {
+                Time = item.Time,
+                FirstSeen = item.Time,
+                EventId = item.Id,
+                Provider = item.Provider,
+                Category = "Unexpected shutdown",
+                Severity = "Warning",
+                Message = TrimMessage(item.Message)
+            }).OrderByDescending(item => item.Time).ToList();
+        }
+        catch (Exception ex)
+        {
+            notes.Add("Unexpected-shutdown events could not be read: " + ex.Message);
             return [];
         }
     }
@@ -159,17 +231,20 @@ internal static partial class EventLogCollector
             string message;
             try { message = record.FormatDescription() ?? string.Empty; }
             catch { message = string.Empty; }
+            string xml;
+            try { xml = record.ToXml(); }
+            catch { xml = string.Empty; }
             var values = record.Properties.Select(p => p.Value?.ToString() ?? string.Empty).ToList();
             if (values.Count == 0)
             {
                 try
                 {
-                    var doc = XDocument.Parse(record.ToXml());
+                    var doc = XDocument.Parse(xml);
                     values.AddRange(doc.Descendants().Where(e => e.Name.LocalName == "Data").Select(e => e.Value));
                 }
                 catch { }
             }
-            result.Add(new EventData(record.TimeCreated?.ToLocalTime() ?? DateTime.MinValue, record.Id, record.ProviderName ?? "Unknown", message, values));
+            result.Add(new EventData(record.TimeCreated?.ToLocalTime() ?? DateTime.MinValue, record.Id, record.ProviderName ?? "Unknown", message, values, xml));
         }
         return result;
     }
@@ -214,5 +289,5 @@ internal static partial class EventLogCollector
     [GeneratedRegex("0x[0-9a-fA-F]{8,16}")]
     private static partial Regex HexCodeRegex();
 
-    private sealed record EventData(DateTime Time, int Id, string Provider, string Message, List<string> Values);
+    private sealed record EventData(DateTime Time, int Id, string Provider, string Message, List<string> Values, string Xml);
 }

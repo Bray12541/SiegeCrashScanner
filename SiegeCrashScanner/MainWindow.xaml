@@ -74,6 +74,19 @@
                 <StackPanel x:Name="ResultsPanel" Visibility="Collapsed" Margin="0,36,0,0">
                     <TextBlock Text="Siege Crash Scan Results" FontSize="26" FontWeight="Bold"/>
                     <TextBlock x:Name="ResultsSubtitle" Foreground="{StaticResource MutedBrush}" Margin="0,6,0,20"/>
+                    <ItemsControl ItemsSource="{Binding MetricItems}" Margin="0,0,0,14">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="4"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9" Margin="0,0,10,0" Padding="16">
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Value}" FontSize="24" FontWeight="Bold" Foreground="{Binding Color}"/>
+                                        <TextBlock Text="{Binding Label}" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                     <ItemsControl ItemsSource="{Binding FindingItems}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
@@ -109,7 +122,7 @@
                         </Expander>
                     </Border>
                     <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9" Margin="0,12,0,0" Padding="18">
-                        <Expander Header="WHEA and graphics-driver event details">
+                        <Expander Header="Hardware, storage, stability, and graphics event details">
                             <ItemsControl ItemsSource="{Binding EventItems}" Margin="0,14,0,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -119,6 +132,11 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                        </Expander>
+                    </Border>
+                    <Border Background="#111923" BorderBrush="#31506D" BorderThickness="1" CornerRadius="9" Margin="0,12,0,0" Padding="18">
+                        <Expander Header="Advanced diagnostic interpretation" IsExpanded="True">
+                            <TextBlock x:Name="AdvancedSummaryText" Foreground="#C7D5E5" TextWrapping="Wrap" LineHeight="21" Margin="0,14,0,0"/>
                         </Expander>
                     </Border>
                     <Border Background="#101D18" BorderBrush="#28583F" BorderThickness="1" CornerRadius="9" Margin="0,18,0,0" Padding="20">
@@ -141,12 +159,15 @@
                     <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1" CornerRadius="9" Margin="0,12,0,0" Padding="20">
                         <StackPanel><TextBlock Text="Recommended Next Step" Foreground="{StaticResource AccentBrush}" FontSize="13" FontWeight="Bold"/><TextBlock x:Name="RecommendationText" FontSize="17" TextWrapping="Wrap" Margin="0,8,0,0"/></StackPanel>
                     </Border>
-                    <TextBlock Text="Windows integrity tools" FontSize="20" FontWeight="SemiBold" Margin="0,30,0,5"/>
-                    <TextBlock Text="These official Windows repairs require administrator approval and run only when you click them." Foreground="{StaticResource MutedBrush}"/>
-                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                    <TextBlock Text="Advanced repair &amp; testing tools" FontSize="20" FontWeight="SemiBold" Margin="0,30,0,5"/>
+                    <TextBlock Text="Every action runs only when clicked. Repairs request administrator approval; diagnostic launchers leave the final choice to Windows." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>
+                    <WrapPanel Margin="0,14,0,0">
                         <Button x:Name="SfcButton" Content="Run SFC Scan" Click="SfcButton_Click" Margin="0,0,10,0"/>
-                        <Button x:Name="DismButton" Content="Run DISM Repair" Click="DismButton_Click"/>
-                    </StackPanel>
+                        <Button x:Name="DismButton" Content="Run DISM Repair" Click="DismButton_Click" Margin="0,0,10,0"/>
+                        <Button x:Name="ChkdskButton" Content="Run CHKDSK Online Scan" Click="ChkdskButton_Click" Margin="0,0,10,0"/>
+                        <Button x:Name="MemoryTestButton" Content="Open Memory Test" Click="MemoryTestButton_Click" Margin="0,0,10,0"/>
+                        <Button x:Name="WindowsUpdateButton" Content="Open Windows Update" Click="WindowsUpdateButton_Click"/>
+                    </WrapPanel>
                     <Border Background="#080A0E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Margin="0,12,0,0" Padding="14">
                         <TextBox x:Name="CommandOutput" Text="Command output will appear here." Background="Transparent" Foreground="#CAD3DF" BorderThickness="0" FontFamily="Consolas" FontSize="12"
                                  TextWrapping="Wrap" AcceptsReturn="True" IsReadOnly="True" MinHeight="120" MaxHeight="350" VerticalScrollBarVisibility="Auto"/>

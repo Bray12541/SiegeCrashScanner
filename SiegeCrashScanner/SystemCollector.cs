@@ -23,6 +23,9 @@ internal static class SystemCollector
             $bios = Get-CimInstance Win32_BIOS | Select-Object -First 1
             $os = Get-CimInstance Win32_OperatingSystem
             $page = @(Get-CimInstance Win32_PageFileUsage)
+            $disks = @(Get-CimInstance Win32_DiskDrive | ForEach-Object {
+                [pscustomobject]@{ Model=$_.Model; Status=$_.Status; MediaType=$_.MediaType; InterfaceType=$_.InterfaceType }
+            })
             $be = Get-CimInstance Win32_Service | Where-Object { $_.Name -match '^(BE|BEService)' -or $_.DisplayName -match 'BattlEye' } | Select-Object -First 1
             [pscustomobject]@{
                 Cpu=$cpu.Name
@@ -31,9 +34,12 @@ internal static class SystemCollector
                 BoardManufacturer=$board.Manufacturer
                 BoardProduct=$board.Product
                 Bios=$bios.SMBIOSBIOSVersion
+                BiosDate=if ($bios.ReleaseDate) { $bios.ReleaseDate.ToString('yyyy-MM-dd') } else { '' }
                 WindowsCaption=$os.Caption
                 WindowsVersion=$os.Version
                 WindowsBuild=$os.BuildNumber
+                LastBoot=if ($os.LastBootUpTime) { $os.LastBootUpTime.ToString('o') } else { '' }
+                Disks=$disks
                 PagefileSizeMb=($page | Measure-Object -Property AllocatedBaseSize -Sum).Sum
                 BattleEyeInstalled=($null -ne $be)
                 BattleEyeState=if ($be) { $be.State } else { 'Missing' }
@@ -52,6 +58,8 @@ internal static class SystemCollector
             snapshot.WindowsVersion = $"{Text(root, "WindowsCaption", "Windows")} {Text(root, "WindowsVersion", string.Empty)} (Build {Text(root, "WindowsBuild", "unknown")})".Trim();
             snapshot.Motherboard = $"{Text(root, "BoardManufacturer", string.Empty)} {Text(root, "BoardProduct", "Unknown")}".Trim();
             snapshot.BiosVersion = Text(root, "Bios", "Unknown");
+            snapshot.BiosDate = Text(root, "BiosDate", "Unknown");
+            if (DateTime.TryParse(Text(root, "LastBoot", string.Empty), out var lastBoot)) snapshot.LastBootTime = lastBoot.ToLocalTime();
             snapshot.PagefileSizeMb = Number(root, "PagefileSizeMb");
             snapshot.PagefileEnabled = snapshot.PagefileSizeMb > 0;
 
@@ -71,6 +79,20 @@ internal static class SystemCollector
                 {
                     snapshot.GpuDriverVersion = Text(preferred, "DriverVersion", "Unknown");
                     snapshot.GpuDriverDate = Text(preferred, "DriverDate", "Unknown");
+                }
+            }
+
+            if (root.TryGetProperty("Disks", out var disks))
+            {
+                foreach (var disk in Elements(disks).Where(item => item.ValueKind == JsonValueKind.Object))
+                {
+                    snapshot.StorageDevices.Add(new StorageDevice
+                    {
+                        Model = Text(disk, "Model", "Unknown drive"),
+                        Status = Text(disk, "Status", "Unknown"),
+                        MediaType = Text(disk, "MediaType", "Unknown"),
+                        InterfaceType = Text(disk, "InterfaceType", "Unknown")
+                    });
                 }
             }
 

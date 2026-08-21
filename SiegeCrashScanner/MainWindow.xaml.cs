@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Windows;
 
 namespace SiegeCrashScanner;
@@ -17,6 +18,7 @@ public partial class MainWindow : Window
     public ObservableCollection<CrashView> CrashItems { get; } = [];
     public ObservableCollection<EventView> EventItems { get; } = [];
     public ObservableCollection<CauseView> CauseItems { get; } = [];
+    public ObservableCollection<MetricView> MetricItems { get; } = [];
 
     public MainWindow()
     {
@@ -101,7 +103,7 @@ public partial class MainWindow : Window
         var progress = new Progress<string>(text => ProgressText.Text = text);
         try
         {
-            _report = await _scanner.ScanAsync(progress);
+            _report = await _scanner.ScanAsync(_report, progress);
             ShowSystem(_report.System);
             ShowReport(_report);
             ResultsPanel.Visibility = Visibility.Visible;
@@ -137,7 +139,7 @@ public partial class MainWindow : Window
         SystemItems.Add(new("WINDOWS", system.WindowsVersion));
         SystemItems.Add(new("GPU DRIVER", $"{system.GpuDriverVersion} · {system.GpuDriverDate}"));
         SystemItems.Add(new("MOTHERBOARD", system.Motherboard));
-        SystemItems.Add(new("BIOS", system.BiosVersion));
+        SystemItems.Add(new("BIOS", system.BiosVersion + (system.BiosDate == "Unknown" ? string.Empty : " · " + system.BiosDate)));
         SystemItems.Add(new("SIEGE INSTALLATION", system.SiegeDetected ? "Detected · " + system.SiegeInstallDirectory : "Not detected"));
     }
 
@@ -182,6 +184,11 @@ public partial class MainWindow : Window
     private void ShowReport(ScanReport report)
     {
         ResultsSubtitle.Text = $"Completed {report.GeneratedAt:g} · Evidence from the last 30 days";
+        MetricItems.Clear();
+        MetricItems.Add(new MetricView("Siege crashes", report.SiegeCrashes.Count.ToString(), report.SiegeCrashes.Count == 0 ? "#72A7FF" : "#F9B84A"));
+        MetricItems.Add(new MetricView("Unique WHEA records", report.WheaEvents.Count.ToString(), report.WheaEvents.Count == 0 ? "#39D98A" : "#FF6577"));
+        MetricItems.Add(new MetricView("WHEA occurrences", report.RawWheaEventCount.ToString(), report.RawWheaEventCount == 0 ? "#39D98A" : "#F9B84A"));
+        MetricItems.Add(new MetricView("GPU/storage events", (report.GpuEvents.Count + report.StorageEvents.Count).ToString(), report.GpuEvents.Count + report.StorageEvents.Count == 0 ? "#39D98A" : "#F9B84A"));
         FindingItems.Clear();
         foreach (var item in report.Findings) FindingItems.Add(new FindingView(item));
 
@@ -192,7 +199,20 @@ public partial class MainWindow : Window
         EventItems.Clear();
         foreach (var item in report.WheaEvents) EventItems.Add(new EventView(item));
         foreach (var item in report.GpuEvents) EventItems.Add(new EventView(item));
-        if (EventItems.Count == 0) EventItems.Add(new EventView("No WHEA or graphics-driver errors were found in the last 30 days.", string.Empty));
+        foreach (var item in report.StorageEvents) EventItems.Add(new EventView(item));
+        foreach (var item in report.StabilityEvents) EventItems.Add(new EventView(item));
+        if (EventItems.Count == 0) EventItems.Add(new EventView("No WHEA, graphics, storage, or unexpected-shutdown errors were found in the last 30 days.", string.Empty));
+
+        var uptime = report.System.LastBootTime is null ? "Unknown" : $"Booted {report.System.LastBootTime:g} ({FormatDuration(DateTime.Now - report.System.LastBootTime.Value)} ago)";
+        var drives = report.System.StorageDevices.Count == 0 ? "No physical-drive status was returned." :
+            string.Join("; ", report.System.StorageDevices.Select(d => $"{d.Model}: {d.Status} ({d.InterfaceType})"));
+        var replay = report.WheaEvents.Where(item => item.IsPreviousError).Sum(item => Math.Max(0, item.OccurrenceCount - 1));
+        AdvancedSummaryText.Text =
+            $"WHEA analysis: {report.RawWheaEventCount} log occurrence(s) collapsed into {report.WheaEvents.Count} unique CPER record(s). " +
+            $"{replay} duplicate occurrence(s) appear to be replayed persisted records. " +
+            $"Hardware-to-Siege correlations within five minutes: {report.CorrelatedWheaEvents.Count}.\n\n" +
+            $"System uptime: {uptime}. Unexpected shutdown events: {report.StabilityEvents.Count}.\n\n" +
+            $"Storage: {drives}";
 
         CauseItems.Clear();
         for (var i = 0; i < report.LikelyCauses.Count; i++) CauseItems.Add(new CauseView(i + 1, report.LikelyCauses[i]));
@@ -202,10 +222,26 @@ public partial class MainWindow : Window
 
     private async void SfcButton_Click(object sender, RoutedEventArgs e) => await RunRepairAsync("sfc.exe /scannow");
     private async void DismButton_Click(object sender, RoutedEventArgs e) => await RunRepairAsync("dism.exe /Online /Cleanup-Image /RestoreHealth");
+    private async void ChkdskButton_Click(object sender, RoutedEventArgs e)
+    {
+        var sourcePath = _systemSnapshot?.SiegeInstallDirectory;
+        if (string.IsNullOrWhiteSpace(sourcePath)) sourcePath = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var drive = Path.GetPathRoot(sourcePath)?.TrimEnd('\\') ?? "C:";
+        await RunRepairAsync($"chkdsk.exe {drive} /scan");
+    }
+
+    private void MemoryTestButton_Click(object sender, RoutedEventArgs e) => LaunchWindowsTool("mdsched.exe", "Windows Memory Diagnostic");
+    private void WindowsUpdateButton_Click(object sender, RoutedEventArgs e) => LaunchWindowsTool("ms-settings:windowsupdate", "Windows Update");
+
+    private void LaunchWindowsTool(string target, string name)
+    {
+        try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); }
+        catch (Exception ex) { MessageBox.Show(this, $"{name} could not be opened.\n\n{ex.Message}", "Siege Crash Scanner", MessageBoxButton.OK, MessageBoxImage.Error); }
+    }
 
     private async Task RunRepairAsync(string command)
     {
-        SfcButton.IsEnabled = DismButton.IsEnabled = false;
+        SfcButton.IsEnabled = DismButton.IsEnabled = ChkdskButton.IsEnabled = false;
         CommandOutput.Text = "> " + command + "\n\nPreparing administrator request…";
         var progress = new Progress<string>(text => CommandOutput.Text = "> " + command + "\n\n" + text);
         try
@@ -219,7 +255,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SfcButton.IsEnabled = DismButton.IsEnabled = true;
+            SfcButton.IsEnabled = DismButton.IsEnabled = ChkdskButton.IsEnabled = true;
         }
     }
 
@@ -245,7 +281,14 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "The report could not be saved.\n\n" + ex.Message, "Siege Crash Scanner", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
+
+    private static string FormatDuration(TimeSpan duration) =>
+        duration.TotalDays >= 1 ? $"{duration.TotalDays:0.#} days" :
+        duration.TotalHours >= 1 ? $"{duration.TotalHours:0.#} hours" :
+        $"{duration.TotalMinutes:0} minutes";
 }
+
+public sealed record MetricView(string Label, string Value, string Color);
 
 public sealed record SystemItemView(string Label, string Value);
 
@@ -285,7 +328,13 @@ public sealed class EventView
 {
     public string Heading { get; }
     public string Message { get; }
-    public EventView(DiagnosticEvent item) { Heading = $"{item.Time:g} · {item.Provider} · Event {item.EventId} · {item.Category}"; Message = item.Message; }
+    public EventView(DiagnosticEvent item)
+    {
+        var occurrences = item.OccurrenceCount > 1 ? $" · {item.OccurrenceCount} occurrences" : string.Empty;
+        var fingerprint = string.IsNullOrWhiteSpace(item.Fingerprint) ? string.Empty : $" · Record {item.Fingerprint}";
+        Heading = $"{item.Time:g} · {item.Provider} · Event {item.EventId} · {item.Category} · {item.Severity}{occurrences}{fingerprint}";
+        Message = string.IsNullOrWhiteSpace(item.TechnicalDetails) ? item.Message : item.TechnicalDetails + " " + item.Message;
+    }
     public EventView(string heading, string message) { Heading = heading; Message = message; }
 }
 

@@ -21,10 +21,14 @@ The published executable is self-contained for Windows x64, so the target PC doe
 - Application Event Log entries for recent Siege crashes, including faulting application/module, exception code, and offset
 - Windows Memory Diagnostic results
 - WHEA hardware events, including CPU, memory-controller, PCIe, and corrected events
+- CPER decoding for known processor, memory, PCIe, and SoC/firmware sections, including fatal/corrected severity and the persisted `PreviousError` flag
+- WHEA fingerprinting that collapses replayed copies into unique records while preserving the raw occurrence count
 - Live physical-memory use, available RAM, pagefile allocation, and commit usage
 - NVIDIA, AMD, and Windows Display driver events, correlated within two minutes of a Siege crash
+- WHEA-to-Siege correlation within five minutes, recent disk/controller/filesystem errors, unexpected shutdown events, system uptime, BIOS date, and physical-drive status
 - BattlEye service state and actual Service Control Manager failure events
 - Currently running overlay and monitoring applications from a clearly defined common-program list
+- A current-session comparison after **SCAN AGAIN**, showing only evidence newer than the previous scan
 
 Results are ranked only when the scan finds supporting evidence. Likelihood is expressed as **Low**, **Medium**, or **High**—never as a fabricated percentage. Exception codes such as `0xc0000005`, `0xc0000374`, and `0xc0000409` are explained as application memory-corruption signals and are not treated as automatic proof of bad RAM.
 
@@ -55,6 +59,14 @@ sfc.exe /scannow
 ```text
 dism.exe /Online /Cleanup-Image /RestoreHealth
 ```
+
+**Run CHKDSK Online Scan** runs:
+
+```text
+chkdsk.exe /scan
+```
+
+The CHKDSK action performs an online diagnostic scan and does not schedule an offline repair. The app can also open Windows Memory Diagnostic and Windows Update, but Windows leaves the final test/update choice to the user.
 
 These repairs run only after a separate button click, trigger the standard Windows administrator prompt, and return their output to the app. Canceling the prompt makes no change.
 
