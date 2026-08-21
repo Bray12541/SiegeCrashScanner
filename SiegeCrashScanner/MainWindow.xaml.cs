@@ -181,6 +181,53 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void NvidiaUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_systemSnapshot is null || !_systemSnapshot.Gpu.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, "No NVIDIA GPU was detected on this PC.", "Siege Crash Scanner", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        await RunVendorUpdaterAsync("NVIDIA App will check the latest compatible Game Ready Driver. Continue?", VendorUpdateService.OpenNvidiaUpdaterAsync);
+    }
+
+    private async void IntelUpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        var hardware = (_systemSnapshot?.Cpu ?? string.Empty) + " " + (_systemSnapshot?.Motherboard ?? string.Empty);
+        if (!hardware.Contains("Intel", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, "No Intel CPU or platform was detected on this PC.", "Siege Crash Scanner", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        await RunVendorUpdaterAsync("Intel Driver & Support Assistant will check compatible Intel platform updates. Motherboard-specific packages may still come from the board manufacturer. Continue?", VendorUpdateService.OpenIntelUpdaterAsync);
+    }
+
+    private async Task RunVendorUpdaterAsync(string confirmation, Func<IProgress<string>?, Task<string>> operation)
+    {
+        if (MessageBox.Show(this, confirmation, "Open official vendor updater", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        DriverUpdateButton.IsEnabled = NvidiaUpdateButton.IsEnabled = IntelUpdateButton.IsEnabled = false;
+        DriverOutputPanel.Visibility = Visibility.Visible;
+        DriverOutput.Text = "Preparing official vendor updater…";
+        var progress = new Progress<string>(text => DriverOutput.Text = text);
+        try
+        {
+            DriverOutput.Text = await operation(progress);
+            DriverOutput.ScrollToEnd();
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            DriverOutput.Text = "Administrator approval was canceled. No vendor installer was run.";
+        }
+        catch (Exception ex)
+        {
+            DriverOutput.Text = "Vendor updater could not finish.\n\n" + ex.Message;
+        }
+        finally
+        {
+            DriverUpdateButton.IsEnabled = NvidiaUpdateButton.IsEnabled = IntelUpdateButton.IsEnabled = true;
+        }
+    }
+
     private void ShowReport(ScanReport report)
     {
         ResultsSubtitle.Text = $"Completed {report.GeneratedAt:g} · Evidence from the last 30 days";

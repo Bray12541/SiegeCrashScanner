@@ -34,11 +34,17 @@ Results are ranked only when the scan finds supporting evidence. Likelihood is e
 
 The scanner recommends one next test at a time. **Export Diagnostic Report** saves the details as a text file after removing the Windows username, computer name, user-profile path components, and IPv4 addresses. Hardware serial numbers are never collected.
 
-## Driver updates
+## Driver Center
 
-**UPDATE DRIVERS** runs from inside the app and uses the built-in Windows Update service to find, download, and install applicable signed GPU and platform drivers for the detected Intel/AMD/NVIDIA hardware. It shows every matched update and installation result in the app, requests administrator approval before making changes, and reports when Windows requires a restart.
+The app provides three separate update paths so a successful Windows Update check is not mistaken for a vendor-current driver check:
 
-The feature installs the newest compatible driver that Windows Update offers to that specific PC. A hardware vendor may occasionally publish a newer optional or beta package that Windows Update does not yet offer. Driver updating never flashes the BIOS or changes firmware, overclocking, XMP, RAM timings, game files, or anti-cheat configuration.
+- **WINDOWS DRIVERS** searches Windows Update for applicable signed display and platform drivers and reports every offered update and installation result inside the app.
+- **NVIDIA GAME READY** opens an installed NVIDIA App, or downloads its current installer from NVIDIA's official site. The downloaded installer must have a valid NVIDIA Authenticode signature before it can run.
+- **INTEL PLATFORM** opens Intel Driver & Support Assistant, or downloads its installer from Intel's official site. The downloaded installer must have a valid Intel Authenticode signature before it can run.
+
+NVIDIA App and Intel Driver & Support Assistant perform the final device-compatibility check and show the vendor's license/install approval. The user must approve that vendor step; Siege Crash Scanner never accepts a third-party license silently. Intel DSA may not offer motherboard-manufacturer-specific packages such as some chipset INF or Management Engine releases, so those may still need to come from the PC or motherboard support page.
+
+Driver updating never flashes the BIOS or changes firmware, overclocking, XMP, RAM timings, game files, or anti-cheat configuration.
 
 ## Automatic app updates
 
